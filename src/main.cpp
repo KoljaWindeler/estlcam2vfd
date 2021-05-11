@@ -45,6 +45,9 @@ bool spindle_running;
 bool run_pin_state;
 uint32_t last_updated;
 uint32_t last_measured;
+uint16_t last_send_us;
+uint16_t last_measured_us;
+uint8_t num_last_measured;
 
 SoftwareSerial myserial(SS_RX,SS_TX); // RX, TX
 Crc16 crc; 
@@ -68,6 +71,10 @@ void setup() {
   last_updated = millis();
   last_measured = millis();
 
+  last_measured_us = 0;
+  num_last_measured = 0;
+  last_send_us = 0;
+
   pinMode(PULSE_PIN,INPUT);
   pinMode(RUN_PIN,INPUT);
   pinMode(SS_DE,OUTPUT);
@@ -79,7 +86,7 @@ void setup() {
 }
 
 void loop() {
-  if(millis()-last_measured>100){ // 100 measurements / sec
+  if(millis()-last_measured>100 && spindle_running){ // 10 measurements / sec
     last_measured = millis();
     pw = pulseIn(PULSE_PIN, HIGH, PULSE_US*2);
     if(pw==0){ 
@@ -92,17 +99,33 @@ void loop() {
       // 0 = 8000
       // 140-ish = 240000
       // x = 8000+(24000-8000)/140*pw_filtered
-      int32_t v = RPM_MIN + ((RPM_MAX-RPM_MIN)/PULSE_US)*pw; // 8000 + x*126
-      rpm_filtered = rpm_filtered + (v-rpm_filtered)/16; // 126/16=8
-      Serial.print(v);
-      Serial.print(" / ");
-      Serial.println(rpm_filtered);
-      set_rpm(rpm_filtered);
+      //Serial.print(pw);
+      //Serial.print(",");
+      //Serial.print(last_measured_us);
+      //Serial.print(",");
+      //Serial.println(num_last_measured);
+      if(pw==last_measured_us){
+        if(num_last_measured<5){
+          num_last_measured++;
+        } else {
+          int32_t v = RPM_MIN + ((RPM_MAX-RPM_MIN)/PULSE_US)*pw; // 8000 + x*126
+          set_rpm(v);
+        }
+      } else {
+        last_measured_us = pw;
+        num_last_measured = 0;
+      }
+
+
+      //rpm_filtered = rpm_filtered + (v-rpm_filtered)/16; // 126/16=8
     }
   }
   if(digitalRead(RUN_PIN)!=run_pin_state){
-    run_pin_state=!run_pin_state;
-    set_state(run_pin_state);
+    delay(10);
+    if(digitalRead(RUN_PIN)!=run_pin_state){
+      run_pin_state=!run_pin_state;
+      set_state(run_pin_state);
+    }
   }
   /*
   Serial.println("an");
@@ -140,7 +163,7 @@ void set_state(bool s){
 
 void set_rpm(uint16_t v) {
   if(millis()-last_updated<1000){
-    Serial.println("ignore");
+    //Serial.println("ignore");
     return;
   }
   last_updated = millis();
@@ -151,6 +174,11 @@ void set_rpm(uint16_t v) {
     return;
   }
   //Serial.println("t2"); delay(1000);
+  if(v<8500){
+    v=8000;
+  } else if(v>24000){
+    v=24000;
+  }
 
   if(abs(spindle_rpm-v)<250){
     Serial.print("Ignore new speed ");
